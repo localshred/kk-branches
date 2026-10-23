@@ -5,20 +5,6 @@ package model
 
 import "time"
 
-// PRLookup describes the state of a branch's pull-request lookup.
-type PRLookup int
-
-const (
-	// PRPending means the lookup has not completed yet.
-	PRPending PRLookup = iota
-	// PRFound means a matching pull request was found.
-	PRFound
-	// PRNone means no pull request exists for the branch.
-	PRNone
-	// PRUnknown means the lookup failed or was not attempted.
-	PRUnknown
-)
-
 // Branch describes a local git branch and everything known about its
 // upstream, worktree checkout, and pull request.
 type Branch struct {
@@ -44,6 +30,20 @@ type PR struct {
 	Checks    string // "passing" | "failing" | "running" | ""
 	UpdatedAt time.Time
 }
+
+// PRLookup describes the state of a branch's pull-request lookup.
+type PRLookup int
+
+const (
+	// PRPending means the lookup has not completed yet.
+	PRPending PRLookup = iota
+	// PRFound means a matching pull request was found.
+	PRFound
+	// PRNone means no pull request exists for the branch.
+	PRNone
+	// PRUnknown means the lookup failed or was not attempted.
+	PRUnknown
+)
 
 // Snapshot is a point-in-time view of a repository's branches, ready for
 // rendering.
