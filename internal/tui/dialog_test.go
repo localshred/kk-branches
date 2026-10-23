@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/localshred/kk-branches/internal/app"
+	"github.com/localshred/kk-branches/internal/model"
 	"github.com/localshred/koolkit/pkg/ui"
 )
 
@@ -107,6 +108,26 @@ func TestDeleteMixedTiersTwoDialogs(t *testing.T) {
 	}
 	if s.confirm != nil {
 		t.Errorf("confirm dialog still open after both answered")
+	}
+}
+
+func TestDeleteDialogsListWorktreeRemoval(t *testing.T) {
+	merged := safeBranch("alice/merged")
+	merged.Worktree = &model.Worktree{Path: "/r/app-wt-alice-merged", Branch: "alice/merged"}
+	local := confirmBranch("alice/local")
+	local.Worktree = &model.Worktree{Path: "/r/app-wt-alice-local", Branch: "alice/local"}
+	f := &fakeActions{snap: snapshot(merged, local)}
+	s := loaded(t, f)
+
+	s, _ = press(t, s, "down", "space", "down", "space", "d")
+	if out := dialog(s); !strings.Contains(out, "alice/merged — removes worktree app-wt-alice-merged") {
+		t.Errorf("safe dialog missing worktree removal:\n%s", out)
+	}
+
+	s, _ = press(t, s, "y")
+	want := "alice/local — never pushed; no PR found; removes worktree app-wt-alice-local"
+	if out := dialog(s); !strings.Contains(out, want) {
+		t.Errorf("confirm dialog missing %q:\n%s", want, out)
 	}
 }
 

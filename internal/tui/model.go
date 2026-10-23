@@ -503,6 +503,19 @@ func (s screen) refresh() (screen, tea.Cmd) {
 	return s, loadCmd(s.actions, s.gen)
 }
 
+// relWorktreePath returns path relative to mainPath's parent
+// directory, or path unchanged when mainPath is unknown or the two
+// are unrelated.
+func relWorktreePath(mainPath, path string) string {
+	if mainPath == "" {
+		return path
+	}
+	if rel, err := filepath.Rel(filepath.Dir(mainPath), path); err == nil {
+		return rel
+	}
+	return path
+}
+
 // removeWorktree removes the highlighted branch's worktree.
 func (s screen) removeWorktree() (screen, tea.Cmd) {
 	b, ok := s.highlighted()
@@ -806,12 +819,7 @@ func (s screen) worktreeCell(b model.Branch) string {
 	}
 	cell := "(main checkout)"
 	if !w.Main {
-		cell = w.Path
-		if s.snap.MainPath != "" {
-			if rel, err := filepath.Rel(filepath.Dir(s.snap.MainPath), w.Path); err == nil {
-				cell = rel
-			}
-		}
+		cell = relWorktreePath(s.snap.MainPath, w.Path)
 	}
 	if w.Dirty {
 		cell += " " + ui.Red("✎ dirty")

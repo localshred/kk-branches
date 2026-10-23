@@ -85,19 +85,29 @@ func deleteCmd(a Actions, bs []model.Branch) tea.Cmd {
 
 // deleteDialogs builds the confirmation dialogs for deleting targets:
 // one for Safe branches, then one for Confirm branches listing why each
-// may hold unmerged work. Other levels are left out.
-func deleteDialogs(targets []model.Branch) []confirmDialog {
+// may hold unmerged work. Each branch with a worktree notes that its
+// worktree, shown relative to mainPath's parent, is removed too. Other
+// levels are left out.
+func deleteDialogs(targets []model.Branch, mainPath string) []confirmDialog {
 	var safe, confirm []model.Branch
 	var safeLines, confirmLines []string
 	for _, b := range targets {
 		risk := model.Assess(b)
+		notes := risk.Reasons
+		if b.Worktree != nil {
+			notes = append(slices.Clone(notes), "removes worktree "+relWorktreePath(mainPath, b.Worktree.Path))
+		}
+		line := b.Name
+		if len(notes) > 0 {
+			line += " — " + strings.Join(notes, "; ")
+		}
 		switch risk.Level {
 		case model.LevelSafe:
 			safe = append(safe, b)
-			safeLines = append(safeLines, b.Name)
+			safeLines = append(safeLines, line)
 		case model.LevelConfirm:
 			confirm = append(confirm, b)
-			confirmLines = append(confirmLines, b.Name+" — "+strings.Join(risk.Reasons, "; "))
+			confirmLines = append(confirmLines, line)
 		}
 	}
 	var out []confirmDialog
@@ -132,7 +142,7 @@ func (s screen) deleteTargets() (screen, tea.Cmd) {
 			targets = []model.Branch{b}
 		}
 	}
-	dialogs := deleteDialogs(targets)
+	dialogs := deleteDialogs(targets, s.snap.MainPath)
 	if len(dialogs) == 0 {
 		s.status = errStatus(undeletableText(targets))
 		return s, nil
