@@ -7,6 +7,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,7 +37,10 @@ func (a App) AddWorktree(s model.Snapshot, branch string) (string, error) {
 			return "", fmt.Errorf("branch %s already checked out at %s", branch, b.Worktree.Path)
 		}
 	}
-	return a.addWorktree(mainWorktreePath(s), branch)
+	if s.MainPath == "" {
+		return "", errors.New("no main worktree found")
+	}
+	return a.addWorktree(s.MainPath, branch)
 }
 
 // Bases returns the branch-creation base candidates: the default
@@ -74,7 +78,10 @@ func (a App) Create(s model.Snapshot, req CreateRequest) (worktreePath string, e
 		}
 		return "", nil
 	case ThenWorktree:
-		return a.addWorktree(mainWorktreePath(s), req.Name)
+		if s.MainPath == "" {
+			return "", errors.New("no main worktree found")
+		}
+		return a.addWorktree(s.MainPath, req.Name)
 	default:
 		return "", nil
 	}
@@ -161,19 +168,23 @@ func (a App) Load() (model.Snapshot, error) {
 	model.Sort(branches)
 
 	return model.Snapshot{
+		Branches:  branches,
+		FetchedAt: a.Repo.FetchedAt(),
+		MainPath:  mainPath,
+		Prefix:    a.Repo.BranchPrefix(branches),
 		Repo:      filepath.Base(mainPath),
 		Trunk:     a.Repo.DefaultBranch(),
-		FetchedAt: a.Repo.FetchedAt(),
-		Branches:  branches,
-		Prefix:    a.Repo.BranchPrefix(branches),
 	}, nil
 }
 
 // LoadPRs resolves the pull request for every non-trunk branch in s
-// and returns the updated snapshot. If GH.Repo or GH.PRsByHead fails,
-// every non-trunk branch is marked PRUnknown and the error is
-// returned alongside the otherwise-unchanged snapshot.
+// and returns the updated snapshot, leaving s itself untouched. If
+// GH.Repo or GH.PRsByHead fails, every non-trunk branch in the
+// returned snapshot is marked PRUnknown and the error is returned
+// alongside it.
 func (a App) LoadPRs(s model.Snapshot) (model.Snapshot, error) {
+	s.Branches = append([]model.Branch(nil), s.Branches...)
+
 	owner, name, err := a.GH.Repo()
 	if err != nil {
 		markUnknown(s.Branches)
@@ -283,17 +294,6 @@ func headFor(b model.Branch) string {
 		return b.Upstream.Head
 	}
 	return b.Name
-}
-
-// mainWorktreePath returns the path of s's main worktree, or "" if
-// none of its branches are checked out there.
-func mainWorktreePath(s model.Snapshot) string {
-	for _, b := range s.Branches {
-		if b.Worktree != nil && b.Worktree.Main {
-			return b.Worktree.Path
-		}
-	}
-	return ""
 }
 
 // markUnknown sets Lookup to PRUnknown on every non-trunk branch in

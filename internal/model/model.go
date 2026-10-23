@@ -48,11 +48,12 @@ const (
 // Snapshot is a point-in-time view of a repository's branches, ready for
 // rendering.
 type Snapshot struct {
+	Branches  []Branch
+	FetchedAt time.Time // zero if never fetched
+	MainPath  string    // absolute path of the main checkout
+	Prefix    string    // branch-name prefill, e.g. "alice/"
 	Repo      string    // basename of main checkout
 	Trunk     string    // default branch name for the header ("" if unknown)
-	FetchedAt time.Time // zero if never fetched
-	Branches  []Branch
-	Prefix    string // branch-name prefill, e.g. "alice/"
 }
 
 // Upstream describes a branch's remote-tracking ref and its divergence

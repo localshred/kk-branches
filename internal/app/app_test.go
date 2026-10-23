@@ -109,9 +109,7 @@ func TestCreateWorktreeCollision(t *testing.T) {
 		"git -C " + mainPath + " branch --no-track alice/x origin/main": {},
 	}}
 	a := App{Repo: git.Repo{Run: fake, Dir: mainPath}}
-	s := model.Snapshot{Branches: []model.Branch{
-		{Name: "main", Trunk: true, Worktree: &model.Worktree{Path: mainPath, Main: true}},
-	}}
+	s := model.Snapshot{MainPath: mainPath}
 
 	_, err := a.Create(s, CreateRequest{Name: "alice/x", Base: "origin/main", Then: ThenWorktree})
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -121,6 +119,54 @@ func TestCreateWorktreeCollision(t *testing.T) {
 		if strings.Contains(call, "worktree add") {
 			t.Errorf("Calls contains %q, want no worktree add call", call)
 		}
+	}
+}
+
+// TestCreateThenWorktreeDetachedMain exercises Create's ThenWorktree
+// path when the main checkout's branch is not tracked on any
+// model.Branch (e.g. it is in detached HEAD state). Snapshot.MainPath
+// is set directly from Repo.Worktrees() by Load regardless of
+// whether the main worktree is attached to a branch, so Create must
+// use it rather than scanning s.Branches for a Worktree.Main entry.
+func TestCreateThenWorktreeDetachedMain(t *testing.T) {
+	mainPath := t.TempDir()
+	wantPath := model.WorktreePath(mainPath, "alice/x")
+
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C " + mainPath + " check-ref-format --branch alice/x":     {},
+		"git -C " + mainPath + " branch --no-track alice/x origin/main": {},
+		"git -C " + mainPath + " worktree add " + wantPath + " alice/x": {},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: mainPath}}
+	s := model.Snapshot{MainPath: mainPath}
+
+	path, err := a.Create(s, CreateRequest{Name: "alice/x", Base: "origin/main", Then: ThenWorktree})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if path != wantPath {
+		t.Errorf("Create() path = %q, want %q", path, wantPath)
+	}
+}
+
+// TestAddWorktreeDetachedMain is AddWorktree's counterpart to
+// TestCreateThenWorktreeDetachedMain.
+func TestAddWorktreeDetachedMain(t *testing.T) {
+	mainPath := t.TempDir()
+	wantPath := model.WorktreePath(mainPath, "bob/y")
+
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C " + mainPath + " worktree add " + wantPath + " bob/y": {},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: mainPath}}
+	s := model.Snapshot{MainPath: mainPath}
+
+	path, err := a.AddWorktree(s, "bob/y")
+	if err != nil {
+		t.Fatalf("AddWorktree() error = %v", err)
+	}
+	if path != wantPath {
+		t.Errorf("AddWorktree() path = %q, want %q", path, wantPath)
 	}
 }
 
@@ -312,6 +358,72 @@ func TestLoadPRsInPRByAncestor(t *testing.T) {
 	}
 	if !b.InPR {
 		t.Error("InPR = false, want true via ancestor check")
+	}
+
+	wantCall := []string{"git", "-C", "/r/app", "merge-base", "--is-ancestor", "localtip", "headoid"}
+	if len(gitFake.Calls) != 1 || !reflect.DeepEqual(gitFake.Calls[0], wantCall) {
+		t.Fatalf("gitFake.Calls = %v, want exactly one call %v", gitFake.Calls, wantCall)
+	}
+}
+
+// TestLoadPRsNotInPRWhenAncestorCheckFails guards against a swapped
+// IsAncestor(a, b) argument order: if the ancestor check errors (as
+// it does whenever the PR head object isn't present locally),
+// IsPR must stay false rather than defaulting to true, which would
+// mark a branch with unpushed commits Safe to delete.
+func TestLoadPRsNotInPRWhenAncestorCheckFails(t *testing.T) {
+	body := `{"data":{"repository":{"p0":{"nodes":[{"number":1,"url":"https://example.com/1",` +
+		`"state":"MERGED","title":"t","headRefOid":"headoid","updatedAt":"2024-01-01T00:00:00Z",` +
+		`"commits":{"nodes":[]}}]}}}}`
+	ghRunner := &ghStub{results: []run.Result{
+		{Stdout: `{"owner":{"login":"o"},"name":"r"}`},
+		{Stdout: body},
+	}}
+	gitFake := &run.Fake{Errs: map[string]error{
+		"git -C /r/app merge-base --is-ancestor localtip headoid": errors.New("exit status 1"),
+	}}
+	a := App{
+		Repo: git.Repo{Run: gitFake, Dir: "/r/app"},
+		GH:   gh.Client{Run: ghRunner},
+	}
+	s := model.Snapshot{Branches: []model.Branch{
+		{Name: "alice/x", Tip: "localtip"},
+	}}
+
+	got, err := a.LoadPRs(s)
+	if err != nil {
+		t.Fatalf("LoadPRs() error = %v", err)
+	}
+	b := got.Branches[0]
+	if b.Lookup != model.PRFound {
+		t.Fatalf("Lookup = %v, want PRFound", b.Lookup)
+	}
+	if b.InPR {
+		t.Error("InPR = true, want false when the ancestor check fails and tips differ")
+	}
+	if level := model.Assess(b).Level; level == model.LevelSafe {
+		t.Errorf("Assess(b).Level = %v, want not Safe when InPR is false", level)
+	}
+}
+
+// TestLoadPRsDoesNotMutateInput guards against LoadPRs writing
+// through to the caller's Branches backing array, which would race
+// with a concurrent read of the snapshot it was given (e.g. a TUI
+// running LoadPRs in a goroutine while View reads the old snapshot).
+func TestLoadPRsDoesNotMutateInput(t *testing.T) {
+	fake := &run.Fake{Errs: map[string]error{
+		"gh repo view --json owner,name": errors.New("exit status 1"),
+	}}
+	a := App{GH: gh.Client{Run: fake}}
+	original := []model.Branch{{Name: "alice/x", Lookup: model.PRPending}}
+	s := model.Snapshot{Branches: original}
+
+	if _, err := a.LoadPRs(s); err == nil {
+		t.Fatal("LoadPRs() error = nil, want non-nil")
+	}
+
+	if original[0].Lookup != model.PRPending {
+		t.Errorf("input branch Lookup = %v, want unchanged PRPending", original[0].Lookup)
 	}
 }
 
