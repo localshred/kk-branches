@@ -356,6 +356,37 @@ func TestSyncFinishedReloads(t *testing.T) {
 	}
 }
 
+func TestSyncSecondCtrlCForceQuits(t *testing.T) {
+	for _, first := range []string{"ctrl+c", "q"} {
+		t.Run(first, func(t *testing.T) {
+			f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+			s := loaded(t, f)
+			s, _ = press(t, s, "s")
+
+			s, cmd := press(t, s, first)
+			if cmd != nil {
+				if _, ok := cmd().(tea.QuitMsg); ok {
+					t.Fatalf("first %s quit while sync running", first)
+				}
+			}
+			if !strings.Contains(view(s), "press ctrl+c again to force quit") {
+				t.Errorf("View() missing force-quit hint:\n%s", view(s))
+			}
+
+			s, cmd = press(t, s, "ctrl+c")
+			if cmd == nil {
+				t.Fatalf("second ctrl+c returned no command")
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Errorf("second ctrl+c did not quit")
+			}
+			if !strings.Contains(s.exit.Message, "sync interrupted") || !strings.Contains(s.exit.Message, "git stash list") {
+				t.Errorf("Exit.Message = %q, want interrupted-sync warning", s.exit.Message)
+			}
+		})
+	}
+}
+
 func TestSyncQuitWaitsForSync(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
 	s := loaded(t, f)

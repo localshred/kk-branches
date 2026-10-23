@@ -21,6 +21,14 @@ const branchWidth = 40
 // columnGap separates table columns.
 const columnGap = "  "
 
+// interruptedText is the Exit message after a force quit during a
+// sync.
+const interruptedText = "sync interrupted; HEAD and the autostash may need restoring (check git status and git stash list)"
+
+// quitDeferredText is the status shown when a quit waits for a running
+// sync.
+const quitDeferredText = "quitting after sync finishes — press ctrl+c again to force quit"
+
 // syncRunningText is the status shown when a key is disabled by a
 // running sync.
 const syncRunningText = "sync running"
@@ -229,6 +237,17 @@ func (s screen) highlighted() (model.Branch, bool) {
 	return rows[s.cursor], true
 }
 
+// interrupt handles ctrl+c: it quits like q, except that a second
+// ctrl+c while a quit is already waiting on a sync force quits, so a
+// hung sync cannot trap the user.
+func (s screen) interrupt() (screen, tea.Cmd) {
+	if s.syncing && s.quitAfterSync {
+		s.exit = Exit{Message: interruptedText}
+		return s, tea.Quit
+	}
+	return s.quit()
+}
+
 // lineCount counts the terminal lines in parts once joined by
 // newlines.
 func lineCount(parts []string) int {
@@ -343,7 +362,7 @@ func (s screen) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	switch {
 	case k == "ctrl+c":
-		return s.quit()
+		return s.interrupt()
 	case s.newBranch != nil:
 		return s.onNewBranchKey(msg)
 	case s.confirm != nil:
@@ -471,7 +490,7 @@ type prsLoadedMsg struct {
 func (s screen) quit() (screen, tea.Cmd) {
 	if s.syncing {
 		s.quitAfterSync = true
-		s.status = okStatus("quitting after sync finishes")
+		s.status = okStatus(quitDeferredText)
 		return s, nil
 	}
 	return s, tea.Quit
