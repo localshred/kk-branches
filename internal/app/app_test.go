@@ -40,6 +40,24 @@ func (s *ghStub) Run(name string, args ...string) (run.Result, error) {
 
 func (s *ghStub) Look(name string) (string, bool) { return "", false }
 
+// seqFake wraps run.Fake so a key can answer differently on each call:
+// a call whose key has entries left in seq consumes the first one, and
+// every other call falls through to the wrapped Fake.
+type seqFake struct {
+	*run.Fake
+	seq map[string][]run.Result
+}
+
+func (f *seqFake) Run(name string, args ...string) (run.Result, error) {
+	key := strings.Join(append([]string{name}, args...), " ")
+	if queue := f.seq[key]; len(queue) > 0 {
+		f.seq[key] = queue[1:]
+		f.Calls = append(f.Calls, append([]string{name}, args...))
+		return queue[0], nil
+	}
+	return f.Fake.Run(name, args...)
+}
+
 // joinedCalls returns the space-joined form of every call recorded in
 // calls, matching run.Fake's own key format.
 func joinedCalls(calls [][]string) []string {
@@ -48,6 +66,30 @@ func joinedCalls(calls [][]string) []string {
 		out[i] = strings.Join(call, " ")
 	}
 	return out
+}
+
+// assertNoRemoval fails t if calls removed a worktree or deleted a
+// branch.
+func assertNoRemoval(t *testing.T, calls [][]string) {
+	t.Helper()
+	for _, call := range joinedCalls(calls) {
+		if strings.Contains(call, "worktree remove") || strings.Contains(call, "branch -D") {
+			t.Errorf("Calls contains %q, want no worktree remove or branch -D call", call)
+		}
+	}
+}
+
+// mergedWithWorktree returns a Safe branch alice/x at tip2, checked out
+// in a clean worktree at /r/app-wt-alice-x.
+func mergedWithWorktree() model.Branch {
+	return model.Branch{
+		Name:     "alice/x",
+		Tip:      "tip2",
+		Worktree: &model.Worktree{Path: "/r/app-wt-alice-x"},
+		Lookup:   model.PRFound,
+		PR:       &model.PR{Number: 1, State: "MERGED"},
+		InPR:     true,
+	}
 }
 
 func TestCreateUsesNoTrack(t *testing.T) {
@@ -172,11 +214,14 @@ func TestAddWorktreeDetachedMain(t *testing.T) {
 
 func TestDeleteRechecksDirty(t *testing.T) {
 	fake := &run.Fake{Results: map[string]run.Result{
-		"git -C /r/app-wt-alice-x status --porcelain": {Stdout: " M f.go\n"},
+		"git -C /r/app rev-parse --verify refs/heads/alice/x": {Stdout: "tip2\n"},
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD":       {Stdout: "refs/heads/alice/x\n"},
+		"git -C /r/app-wt-alice-x status --porcelain":         {Stdout: " M f.go\n"},
 	}}
 	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
 	b := model.Branch{
 		Name:     "alice/x",
+		Tip:      "tip2",
 		Worktree: &model.Worktree{Path: "/r/app-wt-alice-x", Dirty: false},
 		Lookup:   model.PRFound,
 		PR:       &model.PR{Number: 1, State: "MERGED"},
@@ -199,31 +244,107 @@ func TestDeleteRechecksDirty(t *testing.T) {
 
 func TestDeleteRemovesWorktreeThenBranch(t *testing.T) {
 	fake := &run.Fake{Results: map[string]run.Result{
-		"git -C /r/app-wt-alice-x status --porcelain":     {},
-		"git -C /r/app worktree remove /r/app-wt-alice-x": {},
-		"git -C /r/app branch -D alice/x":                 {},
+		"git -C /r/app rev-parse --verify refs/heads/alice/x": {Stdout: "tip2\n"},
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD":       {Stdout: "refs/heads/alice/x\n"},
+		"git -C /r/app-wt-alice-x status --porcelain":         {},
+		"git -C /r/app worktree remove /r/app-wt-alice-x":     {},
+		"git -C /r/app branch -D alice/x":                     {},
 	}}
 	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
-	b := model.Branch{
-		Name:     "alice/x",
-		Worktree: &model.Worktree{Path: "/r/app-wt-alice-x"},
-		Lookup:   model.PRFound,
-		PR:       &model.PR{Number: 1, State: "MERGED"},
-		InPR:     true,
-	}
+	b := mergedWithWorktree()
 
 	if err := a.Delete(b); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 
 	want := []string{
+		"git -C /r/app rev-parse --verify refs/heads/alice/x",
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD",
 		"git -C /r/app-wt-alice-x status --porcelain",
 		"git -C /r/app worktree remove /r/app-wt-alice-x",
+		"git -C /r/app rev-parse --verify refs/heads/alice/x",
 		"git -C /r/app branch -D alice/x",
 	}
 	if got := joinedCalls(fake.Calls); !reflect.DeepEqual(got, want) {
 		t.Errorf("Calls = %v, want %v", got, want)
 	}
+}
+
+func TestDeleteRefusesMovedBranch(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app rev-parse --verify refs/heads/alice/x": {Stdout: "newtip\n"},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+	b := mergedWithWorktree()
+
+	err := a.Delete(b)
+	want := "branch alice/x moved since load; press r"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Delete() error = %v, want %q", err, want)
+	}
+	assertNoRemoval(t, fake.Calls)
+}
+
+func TestDeleteRefusesBranchMovedDuringWorktreeRemoval(t *testing.T) {
+	fake := &seqFake{
+		Fake: &run.Fake{Results: map[string]run.Result{
+			"git -C /r/app-wt-alice-x symbolic-ref -q HEAD":   {Stdout: "refs/heads/alice/x\n"},
+			"git -C /r/app-wt-alice-x status --porcelain":     {},
+			"git -C /r/app worktree remove /r/app-wt-alice-x": {},
+		}},
+		seq: map[string][]run.Result{
+			"git -C /r/app rev-parse --verify refs/heads/alice/x": {
+				{Stdout: "tip2\n"},
+				{Stdout: "newtip\n"},
+			},
+		},
+	}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+
+	err := a.Delete(mergedWithWorktree())
+	want := "branch alice/x moved since load; press r"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Delete() error = %v, want %q", err, want)
+	}
+	for _, call := range joinedCalls(fake.Calls) {
+		if strings.Contains(call, "branch -D") {
+			t.Errorf("Calls contains %q, want no branch -D call", call)
+		}
+	}
+}
+
+func TestDeleteRefusesWorktreeOnAnotherBranch(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app rev-parse --verify refs/heads/alice/x": {Stdout: "tip2\n"},
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD":       {Stdout: "refs/heads/alice/other\n"},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+
+	err := a.Delete(mergedWithWorktree())
+	want := "worktree /r/app-wt-alice-x no longer on alice/x; press r"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Delete() error = %v, want %q", err, want)
+	}
+	assertNoRemoval(t, fake.Calls)
+}
+
+func TestDeleteRefusesDetachedWorktree(t *testing.T) {
+	fake := &run.Fake{
+		Results: map[string]run.Result{
+			"git -C /r/app rev-parse --verify refs/heads/alice/x": {Stdout: "tip2\n"},
+		},
+		Errs: map[string]error{
+			"git -C /r/app-wt-alice-x symbolic-ref -q HEAD": errors.New("exit status 1"),
+		},
+	}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+
+	err := a.Delete(mergedWithWorktree())
+	want := "worktree /r/app-wt-alice-x no longer on alice/x; press r"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Delete() error = %v, want %q", err, want)
+	}
+	assertNoRemoval(t, fake.Calls)
 }
 
 func TestDeleteRefusesBlocked(t *testing.T) {
@@ -252,6 +373,73 @@ func TestRemoveWorktreeRefusesMain(t *testing.T) {
 	}
 	if len(fake.Calls) != 0 {
 		t.Errorf("Calls = %v, want no calls", fake.Calls)
+	}
+}
+
+func TestRemoveWorktreeRefusesCurrent(t *testing.T) {
+	fake := &run.Fake{}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app-wt-alice-x"}}
+	b := model.Branch{Name: "alice/x", Worktree: &model.Worktree{Path: "/r/app-wt-alice-x", Current: true}}
+
+	err := a.RemoveWorktree(b)
+	if err == nil || !strings.Contains(err.Error(), "refusing to remove the current worktree") {
+		t.Fatalf("RemoveWorktree() error = %v, want it to contain %q", err, "refusing to remove the current worktree")
+	}
+	if len(fake.Calls) != 0 {
+		t.Errorf("Calls = %v, want no calls", fake.Calls)
+	}
+}
+
+func TestRemoveWorktreeRefusesFreshlyDirty(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD": {Stdout: "refs/heads/alice/x\n"},
+		"git -C /r/app-wt-alice-x status --porcelain":   {Stdout: "?? new.go\n"},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+	b := model.Branch{Name: "alice/x", Worktree: &model.Worktree{Path: "/r/app-wt-alice-x", Dirty: false}}
+
+	err := a.RemoveWorktree(b)
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("RemoveWorktree() error = %v, want it to contain %q", err, "uncommitted changes")
+	}
+	assertNoRemoval(t, fake.Calls)
+}
+
+func TestRemoveWorktreeRefusesWorktreeOnAnotherBranch(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD": {Stdout: "refs/heads/alice/other\n"},
+		"git -C /r/app-wt-alice-x status --porcelain":   {},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+	b := model.Branch{Name: "alice/x", Worktree: &model.Worktree{Path: "/r/app-wt-alice-x"}}
+
+	err := a.RemoveWorktree(b)
+	want := "worktree /r/app-wt-alice-x no longer on alice/x; press r"
+	if err == nil || err.Error() != want {
+		t.Fatalf("RemoveWorktree() error = %v, want %q", err, want)
+	}
+	assertNoRemoval(t, fake.Calls)
+}
+
+func TestRemoveWorktreeRemovesClean(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD":   {Stdout: "refs/heads/alice/x\n"},
+		"git -C /r/app-wt-alice-x status --porcelain":     {},
+		"git -C /r/app worktree remove /r/app-wt-alice-x": {},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+	b := model.Branch{Name: "alice/x", Worktree: &model.Worktree{Path: "/r/app-wt-alice-x"}}
+
+	if err := a.RemoveWorktree(b); err != nil {
+		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+	want := []string{
+		"git -C /r/app-wt-alice-x symbolic-ref -q HEAD",
+		"git -C /r/app-wt-alice-x status --porcelain",
+		"git -C /r/app worktree remove /r/app-wt-alice-x",
+	}
+	if got := joinedCalls(fake.Calls); !reflect.DeepEqual(got, want) {
+		t.Errorf("Calls = %v, want %v", got, want)
 	}
 }
 

@@ -96,9 +96,10 @@ type CreateRequest struct {
 }
 
 // Delete removes branch b, refusing unless model.Assess(b) is Safe or
-// Confirm. When b has a worktree, its dirtiness is rechecked
-// immediately before removal, since the cached state in b may be
-// stale.
+// Confirm. Since b may be stale, Delete refuses if the branch has
+// moved off b.Tip (checked before and after any worktree removal), and
+// when b has a worktree, rechecks that it is still on b and clean
+// immediately before removing it.
 func (a App) Delete(b model.Branch) error {
 	risk := model.Assess(b)
 	if risk.Level != model.LevelSafe && risk.Level != model.LevelConfirm {
@@ -108,7 +109,14 @@ func (a App) Delete(b model.Branch) error {
 		return fmt.Errorf("refusing to delete branch %s: %s", b.Name, strings.Join(risk.Reasons, "; "))
 	}
 
+	if err := a.verifyTip(b); err != nil {
+		return err
+	}
+
 	if b.Worktree != nil {
+		if err := a.verifyWorktreeBranch(b); err != nil {
+			return err
+		}
 		dirty, err := a.Repo.IsDirty(b.Worktree.Path)
 		if err != nil {
 			return err
@@ -117,6 +125,9 @@ func (a App) Delete(b model.Branch) error {
 			return fmt.Errorf("worktree became dirty: %s", b.Worktree.Path)
 		}
 		if _, err := a.Repo.Git("worktree", "remove", b.Worktree.Path); err != nil {
+			return err
+		}
+		if err := a.verifyTip(b); err != nil {
 			return err
 		}
 	}
@@ -236,8 +247,8 @@ func (a App) Open(url string) error {
 }
 
 // RemoveWorktree removes b's worktree, refusing when it is the main
-// checkout, the worktree kk is running from, or freshly dirty. It
-// never passes --force.
+// checkout, the worktree kk is running from, no longer on b, or
+// freshly dirty. It never passes --force.
 func (a App) RemoveWorktree(b model.Branch) error {
 	w := b.Worktree
 	if w == nil {
@@ -248,6 +259,9 @@ func (a App) RemoveWorktree(b model.Branch) error {
 	}
 	if w.Current {
 		return fmt.Errorf("refusing to remove the current worktree: %s", w.Path)
+	}
+	if err := a.verifyWorktreeBranch(b); err != nil {
+		return err
 	}
 
 	dirty, err := a.Repo.IsDirty(w.Path)
@@ -304,4 +318,23 @@ func markUnknown(bs []model.Branch) {
 			bs[i].Lookup = model.PRUnknown
 		}
 	}
+}
+
+// verifyTip refuses when b's branch no longer points at b.Tip.
+func (a App) verifyTip(b model.Branch) error {
+	res, err := a.Repo.Git("rev-parse", "--verify", "refs/heads/"+b.Name)
+	if err != nil || strings.TrimSpace(res.Stdout) != b.Tip {
+		return fmt.Errorf("branch %s moved since load; press r", b.Name)
+	}
+	return nil
+}
+
+// verifyWorktreeBranch refuses when b's worktree no longer has b
+// checked out.
+func (a App) verifyWorktreeBranch(b model.Branch) error {
+	res, err := a.Repo.GitIn(b.Worktree.Path, "symbolic-ref", "-q", "HEAD")
+	if err != nil || strings.TrimSpace(res.Stdout) != "refs/heads/"+b.Name {
+		return fmt.Errorf("worktree %s no longer on %s; press r", b.Worktree.Path, b.Name)
+	}
+	return nil
 }
