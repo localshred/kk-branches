@@ -152,3 +152,10 @@ worktree that has switched off the branch since the table loaded.
 - `kk.branchPrefix` — a git config key that prefills the name field in the
   new-branch dialog, e.g. `alice/`. When unset, the prefix is derived from
   your existing local branch names instead.
+- `kk.releasePattern` — a multi-valued git config key of branch globs,
+  relative to `origin`, that the new-branch dialog offers as bases (newest
+  first by version sort, up to five). Defaults to `release*` and
+  `release*/**`, which match any branch whose name starts with `release`.
+  Set it per repo to match your own scheme, e.g.
+  `git config kk.releasePattern 'stable-*'`. Setting it replaces the
+  defaults.

@@ -735,7 +735,7 @@ func TestLoadPRsDoesNotMutateInput(t *testing.T) {
 
 func TestBasesDefaultThenReleases(t *testing.T) {
 	fake := &run.Fake{Results: map[string]run.Result{
-		"git -C /r/app for-each-ref --sort=-version:refname --count=5 --format=%(refname:short) refs/remotes/origin/release-*": {
+		"git -C /r/app for-each-ref --sort=-version:refname --count=5 --format=%(refname:short) refs/remotes/origin/release* refs/remotes/origin/release*/**": {
 			Stdout: "origin/release-9\norigin/release-8\n",
 		},
 	}}

@@ -44,7 +44,8 @@ kk branches --print
 
 See [docs/usage.md](docs/usage.md) for every key, the risk levels and why a
 branch gets one, how sync differs from a plain rebase loop, the worktree
-path rule, and the `kk.trunks` / `kk.branchPrefix` config.
+path rule, and the `kk.trunks` / `kk.branchPrefix` / `kk.releasePattern`
+config.
 
 ## Requirements
 

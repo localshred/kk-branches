@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/localshred/kk-branches/internal/model"
@@ -93,5 +94,45 @@ func TestIsAncestorErrorIsFalse(t *testing.T) {
 
 	if repo.IsAncestor("a", "b") {
 		t.Error("IsAncestor() = true, want false on error")
+	}
+}
+
+func TestReleaseBasesDefaultPatterns(t *testing.T) {
+	repo := Repo{Dir: "/repo", Run: &run.Fake{
+		Results: map[string]run.Result{
+			"git -C /repo for-each-ref --sort=-version:refname --count=5 --format=%(refname:short) refs/remotes/origin/release* refs/remotes/origin/release*/**": {
+				Stdout: "origin/release/2.0\norigin/release-1.10\n",
+			},
+		},
+		Errs: map[string]error{
+			"git -C /repo config --get-all kk.releasePattern": errors.New("exit status 1"),
+		},
+	}}
+
+	got := repo.ReleaseBases(5)
+	if len(got) != 2 || got[0] != "origin/release/2.0" || got[1] != "origin/release-1.10" {
+		t.Fatalf("ReleaseBases = %v, want [origin/release/2.0 origin/release-1.10]", got)
+	}
+}
+
+func TestReleaseBasesConfiguredPatterns(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /repo config --get-all kk.releasePattern": {Stdout: "hotfix/* stable-*\nlts\n"},
+		"git -C /repo for-each-ref --sort=-version:refname --count=3 --format=%(refname:short) refs/remotes/origin/hotfix/* refs/remotes/origin/stable-* refs/remotes/origin/lts": {
+			Stdout: "origin/stable-4\n",
+		},
+	}}
+	repo := Repo{Dir: "/repo", Run: fake}
+
+	got := repo.ReleaseBases(3)
+	if len(got) != 1 || got[0] != "origin/stable-4" {
+		t.Fatalf("ReleaseBases = %v, want [origin/stable-4]", got)
+	}
+	for _, call := range fake.Calls {
+		for _, arg := range call {
+			if strings.HasPrefix(arg, "refs/remotes/origin/release") {
+				t.Fatalf("configured patterns must replace the defaults, got call %v", call)
+			}
+		}
 	}
 }

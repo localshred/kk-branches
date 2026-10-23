@@ -11,6 +11,11 @@ import (
 	"github.com/localshred/kk-branches/internal/model"
 )
 
+// DefaultReleasePatterns are the origin branch globs ReleaseBases uses when
+// kk.releasePattern is unset: any branch whose name starts with "release",
+// including nested names such as release/2.0.
+var DefaultReleasePatterns = []string{"release*", "release*/**"}
+
 // BranchPrefix returns the branch-name prefill for new branches: the
 // kk.branchPrefix git config value if set, else the most frequent first
 // path segment (plus "/") among bs whose AuthorEmail matches user.email,
@@ -115,16 +120,22 @@ func (r Repo) IsDirty(path string) (bool, error) {
 	return strings.TrimSpace(res.Stdout) != "", nil
 }
 
-// ReleaseBases returns the n most recent origin/release-* branch names,
-// newest first.
+// ReleaseBases returns the n most recent origin branches matching the
+// release patterns, newest first by version sort. Patterns come from the
+// multi-valued kk.releasePattern git config key (globs relative to origin,
+// whitespace-separated values allowed) and fall back to
+// DefaultReleasePatterns when unset.
 func (r Repo) ReleaseBases(n int) []string {
-	res, err := r.Git(
+	args := []string{
 		"for-each-ref",
 		"--sort=-version:refname",
 		fmt.Sprintf("--count=%d", n),
 		"--format=%(refname:short)",
-		"refs/remotes/origin/release-*",
-	)
+	}
+	for _, pattern := range r.releasePatterns() {
+		args = append(args, "refs/remotes/origin/"+pattern)
+	}
+	res, err := r.Git(args...)
 	if err != nil {
 		return nil
 	}
@@ -181,6 +192,21 @@ func (r Repo) Worktrees() ([]model.Worktree, error) {
 
 // splitLines splits s on newlines, trimming trailing carriage returns and
 // dropping empty lines.
+func (r Repo) releasePatterns() []string {
+	res, err := r.Git("config", "--get-all", "kk.releasePattern")
+	if err != nil {
+		return DefaultReleasePatterns
+	}
+	patterns := []string{}
+	for _, line := range splitLines(res.Stdout) {
+		patterns = append(patterns, strings.Fields(line)...)
+	}
+	if len(patterns) == 0 {
+		return DefaultReleasePatterns
+	}
+	return patterns
+}
+
 func splitLines(s string) []string {
 	lines := []string{}
 	for _, line := range strings.Split(s, "\n") {
