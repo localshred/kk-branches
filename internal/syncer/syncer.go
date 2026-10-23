@@ -125,8 +125,11 @@ const (
 	StatusStashConflict
 	// StatusDone marks the end of a run.
 	StatusDone
-	// StatusFailed means a step the rest of the run depends on — the
-	// fetch or the autostash — failed.
+	// StatusFailed means a step failed outright. Branch is empty for
+	// whole-run steps — the fetch, the autostash, or restoring the
+	// starting HEAD — and set to the branch name for a per-branch step
+	// that could not complete, including a rebase conflict whose own
+	// abort attempt also failed.
 	StatusFailed
 )
 
@@ -190,7 +193,9 @@ func (e Engine) syncHere(b model.Branch, detail string) (bool, Event) {
 		return false, Event{Branch: b.Name, Status: StatusFailed, Detail: err.Error()}
 	}
 	if _, err := e.Repo.Git("rebase", b.Upstream.Ref, "--quiet"); err != nil {
-		e.Repo.Git("rebase", "--abort")
+		if _, abortErr := e.Repo.Git("rebase", "--abort"); abortErr != nil {
+			return true, Event{Branch: b.Name, Status: StatusFailed, Detail: "rebase conflict; abort failed: " + abortErr.Error()}
+		}
 		return true, Event{Branch: b.Name, Status: StatusConflict, Detail: "rebase conflict, aborted"}
 	}
 	return true, Event{Branch: b.Name, Status: StatusRebased, Detail: detail}
@@ -209,7 +214,9 @@ func (e Engine) syncOtherWorktree(b model.Branch, detail string) (bool, Event) {
 		return false, Event{Branch: b.Name, Status: StatusSkipped, Detail: "worktree dirty"}
 	}
 	if _, err := e.Repo.GitIn(path, "rebase", b.Upstream.Ref, "--quiet"); err != nil {
-		e.Repo.GitIn(path, "rebase", "--abort")
+		if _, abortErr := e.Repo.GitIn(path, "rebase", "--abort"); abortErr != nil {
+			return false, Event{Branch: b.Name, Status: StatusFailed, Detail: "rebase conflict; abort failed: " + abortErr.Error()}
+		}
 		return false, Event{Branch: b.Name, Status: StatusConflict, Detail: "rebase conflict, aborted"}
 	}
 	return false, Event{Branch: b.Name, Status: StatusRebased, Detail: detail}
