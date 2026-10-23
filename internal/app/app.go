@@ -57,7 +57,9 @@ func (a App) Bases(s model.Snapshot) []string {
 
 // Create validates and creates a new local branch from req, then
 // performs req.Then: checking it out, adding a worktree for it, or
-// nothing more.
+// nothing more. A worktree path collision is caught before the branch
+// is created, and a base under origin/ is fetched first so the branch
+// starts from the remote's latest commit.
 func (a App) Create(s model.Snapshot, req CreateRequest) (worktreePath string, err error) {
 	if _, err := a.Repo.Git("check-ref-format", "--branch", req.Name); err != nil {
 		return "", err
@@ -65,6 +67,19 @@ func (a App) Create(s model.Snapshot, req CreateRequest) (worktreePath string, e
 	for _, b := range s.Branches {
 		if b.Name == req.Name {
 			return "", fmt.Errorf("branch %s already exists", req.Name)
+		}
+	}
+	if req.Then == ThenWorktree {
+		if s.MainPath == "" {
+			return "", errors.New("no main worktree found")
+		}
+		if _, err := freeWorktreePath(s.MainPath, req.Name); err != nil {
+			return "", err
+		}
+	}
+	if rest, ok := strings.CutPrefix(req.Base, "origin/"); ok {
+		if _, err := a.Repo.Git("fetch", "origin", rest); err != nil {
+			return "", err
 		}
 	}
 	if _, err := a.Repo.Git("branch", "--no-track", req.Name, req.Base); err != nil {
@@ -78,9 +93,6 @@ func (a App) Create(s model.Snapshot, req CreateRequest) (worktreePath string, e
 		}
 		return "", nil
 	case ThenWorktree:
-		if s.MainPath == "" {
-			return "", errors.New("no main worktree found")
-		}
 		return a.addWorktree(s.MainPath, req.Name)
 	default:
 		return "", nil
@@ -291,12 +303,22 @@ const (
 // addWorktree creates a worktree for branch at the conventional path
 // alongside mainPath, refusing when that path already exists.
 func (a App) addWorktree(mainPath, branch string) (string, error) {
-	path := model.WorktreePath(mainPath, branch)
-	if _, err := os.Stat(path); err == nil {
-		return "", fmt.Errorf("%s already exists", path)
+	path, err := freeWorktreePath(mainPath, branch)
+	if err != nil {
+		return "", err
 	}
 	if _, err := a.Repo.Git("worktree", "add", path, branch); err != nil {
 		return "", err
+	}
+	return path, nil
+}
+
+// freeWorktreePath returns the conventional worktree path for branch
+// alongside mainPath, refusing when that path already exists.
+func freeWorktreePath(mainPath, branch string) (string, error) {
+	path := model.WorktreePath(mainPath, branch)
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("%s already exists", path)
 	}
 	return path, nil
 }

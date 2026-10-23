@@ -95,6 +95,7 @@ func mergedWithWorktree() model.Branch {
 func TestCreateUsesNoTrack(t *testing.T) {
 	fake := &run.Fake{Results: map[string]run.Result{
 		"git -C /r/app check-ref-format --branch alice/x":     {},
+		"git -C /r/app fetch origin main":                     {},
 		"git -C /r/app branch --no-track alice/x origin/main": {},
 	}}
 	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
@@ -118,6 +119,71 @@ func TestCreateUsesNoTrack(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Calls = %v, want it to contain %q", calls, want)
+	}
+}
+
+func TestCreateFetchesOriginBaseFirst(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app check-ref-format --branch alice/x":          {},
+		"git -C /r/app fetch origin release-9":                     {},
+		"git -C /r/app branch --no-track alice/x origin/release-9": {},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+
+	if _, err := a.Create(model.Snapshot{}, CreateRequest{
+		Name: "alice/x", Base: "origin/release-9", Then: ThenCreate,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	want := []string{
+		"git -C /r/app check-ref-format --branch alice/x",
+		"git -C /r/app fetch origin release-9",
+		"git -C /r/app branch --no-track alice/x origin/release-9",
+	}
+	if got := joinedCalls(fake.Calls); !reflect.DeepEqual(got, want) {
+		t.Errorf("Calls = %v, want %v", got, want)
+	}
+}
+
+func TestCreateFetchFailureStops(t *testing.T) {
+	fake := &run.Fake{
+		Results: map[string]run.Result{
+			"git -C /r/app check-ref-format --branch alice/x": {},
+		},
+		Errs: map[string]error{
+			"git -C /r/app fetch origin main": errors.New("exit status 128: fatal: couldn't find remote ref main"),
+		},
+	}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+
+	_, err := a.Create(model.Snapshot{}, CreateRequest{Name: "alice/x", Base: "origin/main", Then: ThenCreate})
+	if err == nil || !strings.Contains(err.Error(), "couldn't find remote ref main") {
+		t.Fatalf("Create() error = %v, want the fetch error", err)
+	}
+	for _, call := range joinedCalls(fake.Calls) {
+		if strings.Contains(call, "branch --no-track") {
+			t.Errorf("Calls contains %q, want no branch --no-track call", call)
+		}
+	}
+}
+
+func TestCreateLocalBaseSkipsFetch(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app check-ref-format --branch alice/x": {},
+		"git -C /r/app branch --no-track alice/x bob/y":   {},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+
+	if _, err := a.Create(model.Snapshot{}, CreateRequest{
+		Name: "alice/x", Base: "bob/y", Then: ThenCreate,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for _, call := range joinedCalls(fake.Calls) {
+		if strings.Contains(call, "fetch") {
+			t.Errorf("Calls contains %q, want no fetch for a local base", call)
+		}
 	}
 }
 
@@ -158,8 +224,8 @@ func TestCreateWorktreeCollision(t *testing.T) {
 		t.Fatalf("Create() error = %v, want it to contain %q", err, "already exists")
 	}
 	for _, call := range joinedCalls(fake.Calls) {
-		if strings.Contains(call, "worktree add") {
-			t.Errorf("Calls contains %q, want no worktree add call", call)
+		if strings.Contains(call, "worktree add") || strings.Contains(call, " branch ") || strings.Contains(call, " fetch ") {
+			t.Errorf("Calls contains %q, want no fetch, branch, or worktree add call", call)
 		}
 	}
 }
@@ -176,6 +242,7 @@ func TestCreateThenWorktreeDetachedMain(t *testing.T) {
 
 	fake := &run.Fake{Results: map[string]run.Result{
 		"git -C " + mainPath + " check-ref-format --branch alice/x":     {},
+		"git -C " + mainPath + " fetch origin main":                     {},
 		"git -C " + mainPath + " branch --no-track alice/x origin/main": {},
 		"git -C " + mainPath + " worktree add " + wantPath + " alice/x": {},
 	}}
