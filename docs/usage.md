@@ -88,22 +88,40 @@ break ancestry checks against the trunk.
 
 A clean worktree holding the branch being deleted is removed first, so
 "checked out in a worktree" never blocks a delete by itself — only a dirty
-or current one does.
+or current one does. The confirmation dialog lists each worktree a delete
+will remove.
+
+Deletion rechecks the live repository rather than trusting the table: if
+the branch has moved since the table loaded, or its worktree has since
+switched to another branch, the delete is refused with a message to press
+`r` and reload. A moved branch keeps its worktree.
 
 ## Sync (`s`)
 
 Sync reproduces the `reposync` shell routine, with a few differences:
 
+- It refuses to start while a rebase, merge, cherry-pick, or bisect is in
+  progress in the worktree `kk-branches` runs from; finish or abort it
+  first.
 - It fetches `origin --prune`, then rebases every local branch that has a
   live upstream onto that upstream — using each branch's actual tracked
   upstream, not an assumed `origin/<local name>`.
 - A branch checked out in another worktree is rebased inside that
-  worktree, not the main checkout.
-- The main checkout's own changes are autostashed (including untracked
-  files) before syncing and popped afterward, same as `reposync`. A dirty
-  *other* worktree, though, is only skipped — never stashed or rebased —
-  because another process (a Claude session, for example) may be mid-edit
-  there. A plain rebase loop has no such protection.
+  worktree, not the main checkout. A branch checked out nowhere is
+  fast-forwarded in place when it can be; if git refuses (say, the branch
+  was checked out elsewhere after the table loaded), it is skipped with
+  git's reason.
+- Changes in the worktree `kk-branches` runs from — not necessarily the
+  main checkout — are autostashed (including untracked files) before
+  syncing and popped afterward, same as `reposync`. Every other worktree,
+  including the main checkout when you run from somewhere else, is
+  skipped if dirty — never stashed or rebased — and otherwise rebased in
+  place, because another process (a Claude session, for example) may be
+  mid-edit there. A plain rebase loop has no such protection.
+- Only the autostash `kk-branches` itself pushed is popped, found by its
+  commit in `git stash list`, so a stash another process pushes meanwhile
+  is left alone. If the starting branch can't be checked back out, the
+  stash is kept rather than popped onto the wrong branch.
 - Progress streams per branch: `rebased +n`, `up to date`, `skipped:
   <reason>`, or `conflict: aborted`. The header shows a spinner and a
   `syncing n/total` counter while it runs. Navigation keys keep working,
@@ -122,7 +140,8 @@ checkout becomes `../my-repo-wt-alice-fix-login`.
 If that path already exists, `kk-branches` says so and stops — it never
 guesses a different name or auto-renames to avoid the collision. Removing
 a worktree never passes `--force`, and refuses on a dirty worktree, the
-main checkout, or the worktree `kk-branches` is currently running from.
+main checkout, the worktree `kk-branches` is currently running from, or a
+worktree that has switched off the branch since the table loaded.
 
 ## Configuration
 
