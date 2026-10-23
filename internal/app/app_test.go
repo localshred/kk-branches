@@ -304,6 +304,57 @@ func TestLoadJoinsWorktrees(t *testing.T) {
 	}
 }
 
+// TestLoadMarksUnreadableWorktreesDirty covers a worktree whose
+// directory was deleted out from under git: Load must still succeed,
+// with that worktree (and any whose status fails) marked Dirty so
+// nothing acts on it.
+func TestLoadMarksUnreadableWorktreesDirty(t *testing.T) {
+	refFormat := "git -C /r/app for-each-ref --format=%(refname:short)%00%(objectname)%00" +
+		"%(authoremail)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:remoteref)%00" +
+		"%(upstream:track,nobracket) refs/heads/"
+	fake := &run.Fake{
+		Results: map[string]run.Result{
+			refFormat: {
+				Stdout: "main\x00tip1\x00<a@example.com>\x001000\x00\x00\x00\n" +
+					"alice/gone\x00tip2\x00<a@example.com>\x001001\x00\x00\x00\n" +
+					"bob/broken\x00tip3\x00<a@example.com>\x001002\x00\x00\x00\n",
+			},
+			"git -C /r/app worktree list --porcelain": {
+				Stdout: "worktree /r/app\nHEAD tip1\nbranch refs/heads/main\n\n" +
+					"worktree /r/app-wt-alice-gone\nHEAD tip2\nbranch refs/heads/alice/gone\n" +
+					"prunable gitdir file points to non-existent location\n\n" +
+					"worktree /r/app-wt-bob-broken\nHEAD tip3\nbranch refs/heads/bob/broken\n\n",
+			},
+		},
+		Errs: map[string]error{
+			"git -C /r/app-wt-alice-gone status --porcelain": errors.New("exit status 128"),
+			"git -C /r/app-wt-bob-broken status --porcelain": errors.New("exit status 128"),
+		},
+	}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+
+	snap, err := a.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	for _, b := range snap.Branches {
+		if b.Name == "main" {
+			continue
+		}
+		if b.Worktree == nil || !b.Worktree.Dirty {
+			t.Errorf("%s Worktree = %+v, want Dirty", b.Name, b.Worktree)
+		}
+		if level := model.Assess(b).Level; level != model.LevelBlocked {
+			t.Errorf("%s Assess().Level = %v, want LevelBlocked", b.Name, level)
+		}
+	}
+	for _, call := range joinedCalls(fake.Calls) {
+		if call == "git -C /r/app-wt-alice-gone status --porcelain" {
+			t.Errorf("Calls contains %q, want no status call for a prunable worktree", call)
+		}
+	}
+}
+
 func TestLoadPRsUnknownOnError(t *testing.T) {
 	fake := &run.Fake{Errs: map[string]error{
 		"gh repo view --json owner,name": errors.New("exit status 1"),

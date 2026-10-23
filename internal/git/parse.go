@@ -35,7 +35,9 @@ func ParseBranches(out string) []model.Branch {
 
 // ParseWorktrees parses the porcelain output of `git worktree list` into
 // model.Worktree values. The first entry is marked Main; the entry whose
-// Path matches currentDir is marked Current.
+// Path matches currentDir is marked Current. Entries git reports as
+// prunable (their directory is gone) are marked Dirty so nothing acts
+// on them.
 func ParseWorktrees(out string, currentDir string) []model.Worktree {
 	worktrees := []model.Worktree{}
 	var cur *model.Worktree
@@ -61,6 +63,10 @@ func ParseWorktrees(out string, currentDir string) []model.Worktree {
 			if cur != nil {
 				ref := strings.TrimPrefix(line, "branch ")
 				cur.Branch = strings.TrimPrefix(ref, "refs/heads/")
+			}
+		case line == "prunable" || strings.HasPrefix(line, "prunable "):
+			if cur != nil {
+				cur.Dirty = true
 			}
 		}
 	}

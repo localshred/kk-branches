@@ -161,7 +161,8 @@ func (r Repo) TrunkNames() []string {
 }
 
 // Worktrees returns every worktree of the repository, with Dirty filled
-// in via IsDirty.
+// in via IsDirty. A prunable worktree, or one whose status cannot be
+// read, is marked Dirty rather than failing the whole listing.
 func (r Repo) Worktrees() ([]model.Worktree, error) {
 	res, err := r.Git("worktree", "list", "--porcelain")
 	if err != nil {
@@ -169,11 +170,11 @@ func (r Repo) Worktrees() ([]model.Worktree, error) {
 	}
 	worktrees := ParseWorktrees(res.Stdout, r.Dir)
 	for i := range worktrees {
-		dirty, err := r.IsDirty(worktrees[i].Path)
-		if err != nil {
-			return nil, err
+		if worktrees[i].Dirty {
+			continue
 		}
-		worktrees[i].Dirty = dirty
+		dirty, err := r.IsDirty(worktrees[i].Path)
+		worktrees[i].Dirty = dirty || err != nil
 	}
 	return worktrees, nil
 }

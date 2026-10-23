@@ -99,3 +99,28 @@ func TestParseWorktrees(t *testing.T) {
 		t.Errorf("worktrees[2] = %+v, want Main false Current false", worktrees[2])
 	}
 }
+
+func TestParseWorktreesPrunableIsDirty(t *testing.T) {
+	out := strings.Join([]string{
+		"worktree /r/app",
+		"HEAD aaa",
+		"branch refs/heads/main",
+		"",
+		"worktree /r/app-wt-gone",
+		"HEAD bbb",
+		"branch refs/heads/alice/gone",
+		"prunable gitdir file points to non-existent location",
+		"",
+	}, "\n")
+
+	worktrees := ParseWorktrees(out, "/r/app")
+	if len(worktrees) != 2 {
+		t.Fatalf("len(worktrees) = %d, want 2", len(worktrees))
+	}
+	if worktrees[0].Dirty {
+		t.Errorf("worktrees[0].Dirty = true, want false")
+	}
+	if !worktrees[1].Dirty {
+		t.Errorf("worktrees[1].Dirty = false, want true for a prunable entry")
+	}
+}
