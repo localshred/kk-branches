@@ -225,6 +225,60 @@ func TestCursorRowHighlighted(t *testing.T) {
 	}
 }
 
+func TestInfoPanelFollowsCursor(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/a"), confirmBranch("alice/b"))}
+	s := loaded(t, f)
+	want := map[string]string{
+		"alice/a": "safe deletion: safe",
+		"alice/b": "safe deletion: confirm",
+	}
+
+	s, _ = press(t, s, "down", "i")
+	for range 2 {
+		b, _ := s.highlighted()
+		out := view(s)
+		for name, text := range want {
+			if got := strings.Contains(out, text); got != (name == b.Name) {
+				t.Errorf("cursor on %s: View() contains %q = %v:\n%s", b.Name, text, got, out)
+			}
+		}
+		s, _ = press(t, s, "down")
+	}
+}
+
+func TestInfoPanelShowsRiskReasons(t *testing.T) {
+	f := &fakeActions{snap: snapshot(confirmBranch("alice/new"))}
+	s := loaded(t, f)
+
+	s, _ = press(t, s, "down", "i")
+	out := view(s)
+	for _, text := range []string{"safe deletion: confirm", "· never pushed", "· no PR found"} {
+		if !strings.Contains(out, text) {
+			t.Errorf("View() missing %q:\n%s", text, out)
+		}
+	}
+
+	s, _ = press(t, s, "esc")
+	if out := view(s); strings.Contains(out, "never pushed") {
+		t.Errorf("esc left the info panel open:\n%s", out)
+	}
+}
+
+func TestInfoPanelShowsSafeAndTrunkReasons(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+
+	s, _ = press(t, s, "i")
+	if out := view(s); !strings.Contains(out, "trunks are never deleted") {
+		t.Errorf("trunk info missing reason:\n%s", out)
+	}
+
+	s, _ = press(t, s, "down")
+	if out := view(s); !strings.Contains(out, "PR #7 merged and contains the branch tip") {
+		t.Errorf("safe info missing reason:\n%s", out)
+	}
+}
+
 func TestOpenPROpensHighlightedURL(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
 	s := loaded(t, f)
@@ -295,6 +349,22 @@ func TestPresetTabFiltersRows(t *testing.T) {
 	}
 	if strings.Contains(out, "alice/local") {
 		t.Errorf("merged preset shows alice/local:\n%s", out)
+	}
+}
+
+func TestRiskColumnHeader(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+
+	if out := view(s); !strings.Contains(out, "SAFE DELETION?") {
+		t.Errorf("View() missing risk header:\n%s", out)
+	}
+
+	s, _ = press(t, s, "s")
+	s = send(t, s, syncer.Event{Branch: "alice/x", Status: syncer.StatusUpToDate, Done: 1, Total: 1})
+	out := view(s)
+	if !strings.Contains(out, "SYNC RESULT") || strings.Contains(out, "SAFE DELETION?") {
+		t.Errorf("View() after sync events should label the column SYNC RESULT:\n%s", out)
 	}
 }
 

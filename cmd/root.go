@@ -144,7 +144,7 @@ func newRoot(r run.Runner) *cobra.Command {
 // printHeader returns the dimmed column header row for the --print
 // table, matching the TUI's own header labels.
 func printHeader() []string {
-	labels := []string{"BRANCH", "ORIGIN", "PR", "WORKTREE", "AGE", ""}
+	labels := []string{"BRANCH", "ORIGIN", "PR", "WORKTREE", "AGE", "SAFE DELETION?"}
 	header := make([]string, len(labels))
 	for i, label := range labels {
 		if label == "" {

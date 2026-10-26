@@ -55,9 +55,8 @@ var actionKeys = map[string]func(screen) (screen, tea.Cmd){
 	"w":     screen.addWorktree,
 }
 
-// columnHeaders labels the table columns after the select glyph; the
-// risk column has no header.
-var columnHeaders = []string{"BRANCH", "ORIGIN", "PR", "WORKTREE", "AGE", ""}
+// columnHeaders labels the table columns after the select glyph.
+var columnHeaders = []string{"BRANCH", "ORIGIN", "PR", "WORKTREE", "AGE", "SAFE DELETION?"}
 
 // helpText lists every key, shown by the ? overlay.
 var helpText = []string{
@@ -72,9 +71,19 @@ var helpText = []string{
 	"n           new branch",
 	"s           sync all branches with origin",
 	"o           open the highlighted row's PR",
+	"i           explain the highlighted row's deletion risk",
 	"r           reload",
 	"?           toggle this help",
 	"q / ctrl+c  quit",
+}
+
+// infoLevels names each risk level in the info panel.
+var infoLevels = map[model.Level]string{
+	model.LevelBlocked: ui.Red("blocked"),
+	model.LevelConfirm: ui.Yellow("confirm"),
+	model.LevelNone:    ui.Dim("trunk"),
+	model.LevelPending: ui.Dim("checking PR…"),
+	model.LevelSafe:    ui.Green("safe"),
 }
 
 // navKeys are the keys that stay available while a sync is running.
@@ -82,6 +91,7 @@ var navKeys = map[string]func(screen) (screen, tea.Cmd){
 	"/":         screen.focusFilter,
 	"?":         screen.toggleHelp,
 	"down":      screen.moveDown,
+	"i":         screen.toggleInfo,
 	"j":         screen.moveDown,
 	"k":         screen.moveUp,
 	"q":         screen.quit,
@@ -251,6 +261,19 @@ func (s screen) highlighted() (model.Branch, bool) {
 	return rows[s.cursor], true
 }
 
+// infoReasons lists why b has its risk level, for the info panel.
+func infoReasons(b model.Branch, risk model.Risk) []string {
+	switch risk.Level {
+	case model.LevelNone:
+		return []string{"trunks are never deleted"}
+	case model.LevelPending:
+		return []string{"PR lookup still running"}
+	case model.LevelSafe:
+		return []string{"PR #" + strconv.Itoa(b.PR.Number) + " merged and contains the branch tip"}
+	}
+	return risk.Reasons
+}
+
 // interrupt handles ctrl+c: it quits like q, except that a second
 // ctrl+c while a quit is already waiting on a sync force quits, so a
 // hung sync cannot trap the user.
@@ -370,8 +393,20 @@ func (s screen) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return s, nil
 }
 
+// onInfoKey handles keys while the info panel is shown; moving the
+// cursor keeps it open on the new row.
+func (s screen) onInfoKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch k := msg.String(); k {
+	case "esc", "i":
+		s.info = false
+	case "down", "j", "k", "q", "up":
+		return navKeys[k](s)
+	}
+	return s, nil
+}
+
 // onKey routes a keypress to the open dialog, the text filter, the
-// help overlay, or the table.
+// help overlay, the info panel, or the table.
 func (s screen) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	switch {
@@ -385,6 +420,8 @@ func (s screen) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return s.onFilterKey(msg)
 	case s.help:
 		return s.onHelpKey(msg)
+	case s.info:
+		return s.onInfoKey(msg)
 	}
 	if fn, ok := navKeys[k]; ok {
 		return fn(s)
@@ -553,6 +590,8 @@ func (s screen) render() string {
 		bottom = append(bottom, "", s.newBranch.view())
 	case s.confirm != nil:
 		bottom = append(bottom, "", s.confirm[0].view())
+	case s.info:
+		bottom = append(bottom, "", s.renderInfo())
 	}
 	bottom = append(bottom, s.renderStatus(), s.renderFooter())
 	if s.help {
@@ -589,7 +628,7 @@ func (s screen) renderFilters() string {
 
 // renderFooter draws the selection count and key hints.
 func (s screen) renderFooter() string {
-	hints := "space select · a select safe · d delete · w +worktree · W -worktree · n new · s sync · o open PR · r reload · ? help · q quit"
+	hints := "space select · a select safe · d delete · w +worktree · W -worktree · n new · s sync · o open PR · i info · r reload · ? help · q quit"
 	return strconv.Itoa(len(s.selected)) + " selected · " + ui.Dim(hints)
 }
 
@@ -607,6 +646,24 @@ func (s screen) renderHeader() string {
 		state = ui.Dim("↻ fetched " + ui.Humanize(s.now().Sub(s.snap.FetchedAt)) + " ago")
 	}
 	return ui.Cyan(s.snap.Repo) + "  trunk: " + trunk + "  " + state
+}
+
+// renderInfo explains the highlighted row's deletion risk and shows its
+// last sync result.
+func (s screen) renderInfo() string {
+	b, ok := s.highlighted()
+	if !ok {
+		return ui.Dim("no branch highlighted · i/esc close")
+	}
+	risk := model.Assess(b)
+	lines := []string{ui.Cyan(b.Name), "  safe deletion: " + infoLevels[risk.Level]}
+	for _, r := range infoReasons(b, risk) {
+		lines = append(lines, "  · "+r)
+	}
+	if last, ok := s.syncResults[b.Name]; ok {
+		lines = append(lines, "  last sync: "+last)
+	}
+	return strings.Join(append(lines, ui.Dim("i/esc close")), "\n")
 }
 
 // renderRow builds the cells for one branch.
@@ -661,6 +718,9 @@ func (s screen) renderTable(room int) []string {
 			header[i] = ui.Dim(h)
 		}
 	}
+	if s.syncResults != nil {
+		header[len(header)-1] = ui.Dim("SYNC RESULT")
+	}
 	cells = append(cells, header)
 	for _, b := range rows {
 		cells = append(cells, s.renderRow(b))
@@ -698,6 +758,7 @@ type screen struct {
 	gen           int
 	height        int
 	help          bool
+	info          bool
 	newBranch     *newBranchDialog
 	now           func() time.Time
 	preset        int
@@ -776,6 +837,14 @@ type syncFinishedMsg struct{ err error }
 // toggleHelp shows or hides the help overlay.
 func (s screen) toggleHelp() (screen, tea.Cmd) {
 	s.help = !s.help
+	return s, nil
+}
+
+// toggleInfo shows or hides the info panel for the highlighted row.
+func (s screen) toggleInfo() (screen, tea.Cmd) {
+	if _, ok := s.highlighted(); ok || s.info {
+		s.info = !s.info
+	}
 	return s, nil
 }
 

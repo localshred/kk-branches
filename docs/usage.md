@@ -27,8 +27,9 @@ Columns, left to right:
   `(main checkout)` for the primary one, with `✎ dirty` appended when it
   has uncommitted or untracked changes
 - `AGE` — age of the branch's last commit
-- risk — `safe`, `confirm`, `blocked`, or blank for trunks (see Risk levels
-  below)
+- `SAFE DELETION?` — `safe`, `confirm`, `blocked`, or blank for trunks
+  (see Risk levels below); once a sync has run, the column is relabeled
+  `SYNC RESULT` and shows each branch's sync outcome until `r` reloads
 
 Keys:
 
@@ -46,6 +47,9 @@ Keys:
 - `n` — open the new-branch dialog
 - `s` — sync every branch with origin
 - `o` — open the highlighted row's PR in the browser
+- `i` — open the info panel, which lists why the highlighted row is safe,
+  confirm, or blocked, plus its last sync result; it follows the cursor as
+  you move, and `i` or `esc` closes it
 - `r` — reload
 - `?` — toggle the help overlay
 - `q` / `ctrl+c` — quit
