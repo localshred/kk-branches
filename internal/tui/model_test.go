@@ -198,6 +198,33 @@ func TestBlockedRowNotSelectable(t *testing.T) {
 	}
 }
 
+func TestCursorRowHighlighted(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+	s = send(t, s, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	s, _ = press(t, s, "down")
+	out := s.View().Content
+
+	row := rowFor(t, out, "alice/x")
+	if !strings.HasPrefix(row, cursorBackground) {
+		t.Errorf("cursor row does not start with the highlight: %q", row)
+	}
+	if !strings.HasSuffix(row, ansiReset) {
+		t.Errorf("cursor row does not end with a reset: %q", row)
+	}
+	resets := strings.Count(row, ansiReset)
+	if reapplied := strings.Count(row, ansiReset+cursorBackground); reapplied != resets-1 {
+		t.Errorf("highlight re-applied after %d of %d inner resets: %q", reapplied, resets-1, row)
+	}
+	if n := ui.VisibleLen(row); n != 120 {
+		t.Errorf("cursor row visible width = %d, want 120", n)
+	}
+	if trunk := rowFor(t, out, "★"); strings.Contains(trunk, cursorBackground) {
+		t.Errorf("non-cursor row is highlighted: %q", trunk)
+	}
+}
+
 func TestOpenPROpensHighlightedURL(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
 	s := loaded(t, f)

@@ -15,11 +15,18 @@ import (
 	"github.com/localshred/koolkit/pkg/ui"
 )
 
+// ansiReset ends every color sequence the table cells emit.
+const ansiReset = "\033[0m"
+
 // branchWidth is the rune width branch names are truncated to.
 const branchWidth = 40
 
 // columnGap separates table columns.
 const columnGap = "  "
+
+// cursorBackground is the 256-color background painted behind the
+// cursor row.
+const cursorBackground = "\033[48;5;236m"
 
 // interruptedText is the Exit message after a force quit during a
 // sync.
@@ -119,7 +126,7 @@ func (s screen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return s.onKey(msg)
 	case tea.WindowSizeMsg:
-		s.height = msg.Height
+		s.height, s.width = msg.Height, msg.Width
 		return s, nil
 	default:
 		return s.updateInputs(msg)
@@ -226,6 +233,13 @@ func errStatus(text string) status { return status{err: true, text: text} }
 // focusFilter starts editing the text filter.
 func (s screen) focusFilter() (screen, tea.Cmd) {
 	return s, s.filter.Focus()
+}
+
+// highlightRow paints cursorBackground behind line out to width
+// columns, re-applying it after each reset inside the line's cells.
+func highlightRow(line string, width int) string {
+	pad := strings.Repeat(" ", max(0, width-ui.VisibleLen(line)))
+	return cursorBackground + strings.ReplaceAll(line, ansiReset, ansiReset+cursorBackground) + pad + ansiReset
 }
 
 // highlighted returns the branch under the cursor.
@@ -653,11 +667,11 @@ func (s screen) renderTable(room int) []string {
 	}
 	lines := alignColumns(cells)
 	for i := range lines {
-		marker := "  "
-		if i-1 == s.cursor {
-			marker = ui.Cyan("▸ ")
+		if i-1 != s.cursor {
+			lines[i] = "  " + lines[i]
+			continue
 		}
-		lines[i] = marker + lines[i]
+		lines[i] = highlightRow(ui.Cyan("▸ ")+lines[i], s.width)
 	}
 	if room == 0 || len(lines)-1 <= room {
 		return lines
@@ -698,6 +712,7 @@ type screen struct {
 	syncResults   map[string]string
 	syncTotal     int
 	syncing       bool
+	width         int
 }
 
 // selectSafe selects every Safe row among the visible rows.
