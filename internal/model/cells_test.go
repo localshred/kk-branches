@@ -75,7 +75,8 @@ func TestPRCellStates(t *testing.T) {
 	}{
 		{"pending", Branch{Lookup: PRPending}, "…"},
 		{"unknown", Branch{Lookup: PRUnknown}, "?"},
-		{"none", Branch{Lookup: PRNone}, "— none"},
+		{"none", Branch{Lookup: PRNone}, "—"},
+		{"found without a PR", Branch{Lookup: PRFound}, "—"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

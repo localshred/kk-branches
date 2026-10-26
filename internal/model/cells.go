@@ -55,24 +55,19 @@ func OriginCell(u *Upstream) string {
 }
 
 // PRCell renders a branch's pull-request lookup state: a placeholder
-// while pending or unknown, a dim "none" when there isn't one, or a
+// while pending or unknown, a dim dash when there isn't one, or a
 // hyperlinked PR number with its state and, for open PRs, a checks
 // glyph.
 func PRCell(b Branch) string {
-	switch b.Lookup {
-	case PRPending:
+	switch {
+	case b.Lookup == PRPending:
 		return "…"
-	case PRUnknown:
+	case b.Lookup == PRUnknown:
 		return "?"
-	case PRFound:
-		if b.PR == nil {
-			return ui.Dim("— none")
-		}
+	case b.Lookup == PRFound && b.PR != nil:
 		return ui.Hyperlink(b.PR.URL, ui.Cyan("#"+strconv.Itoa(b.PR.Number))) + " " + prStateCell(*b.PR)
-	case PRNone:
-		return ui.Dim("— none")
 	default:
-		return ui.Dim("— none")
+		return ui.Dim("—")
 	}
 }
 

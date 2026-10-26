@@ -23,7 +23,8 @@ Columns, left to right:
 - `ORIGIN` — `=` in sync, `↑n`/`↓n` ahead/behind (both if diverged), `gone`
   (upstream deleted), or `local only` (never pushed)
 - `PR` — a cmd-clickable `#number`, its state (`open`, `merged`, `closed`),
-  a checks glyph when open, or `— none`; trunk rows show `trunk`
+  a checks glyph when open, or `—` when none is found; trunk rows show
+  `trunk`
 - `WORKTREE` — the worktree's path relative to the repo's parent directory,
   `(main checkout)` for the primary one, with `✎ dirty` appended when it
   has uncommitted or untracked changes
