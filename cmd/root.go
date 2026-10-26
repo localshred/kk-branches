@@ -62,6 +62,10 @@ func (a actions) Bases(s model.Snapshot) []string {
 	return a.app.Bases(s)
 }
 
+func (a actions) Checkout(s model.Snapshot, b model.Branch) error {
+	return a.app.Checkout(s, b)
+}
+
 func (a actions) Create(s model.Snapshot, req app.CreateRequest) (string, error) {
 	return a.app.Create(s, req)
 }

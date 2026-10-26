@@ -1,7 +1,8 @@
 // Package app implements kk-branches' application layer: loading the
 // repository snapshot from git and GitHub, and the user actions on
-// top of it — creating branches, adding and removing worktrees,
-// deleting branches, and opening URLs. Deletion and worktree removal
+// top of it — creating branches, checking them out in the main
+// checkout, adding and removing worktrees, deleting branches, and
+// opening URLs. Deletion and worktree removal
 // can lose a user's work, so their safety checks live here rather than
 // in the TUI.
 package app
@@ -53,6 +54,31 @@ func (a App) Bases(s model.Snapshot) []string {
 	}
 	bases := []string{"origin/" + trunk}
 	return append(bases, a.Repo.ReleaseBases(5)...)
+}
+
+// Checkout checks branch b out in the main checkout of s, so editors
+// open on the repository see it. It refuses when b is already checked
+// out somewhere or the main checkout has uncommitted changes, and it
+// never stashes.
+func (a App) Checkout(s model.Snapshot, b model.Branch) error {
+	if s.MainPath == "" {
+		return errors.New("no main worktree found")
+	}
+	if w := b.Worktree; w != nil {
+		if w.Main {
+			return fmt.Errorf("branch %s is already checked out in the main checkout", b.Name)
+		}
+		return fmt.Errorf("branch %s is checked out at %s", b.Name, w.Path)
+	}
+	dirty, err := a.Repo.IsDirty(s.MainPath)
+	if err != nil {
+		return err
+	}
+	if dirty {
+		return fmt.Errorf("main checkout has uncommitted changes: %s", s.MainPath)
+	}
+	_, err = a.Repo.GitIn(s.MainPath, "checkout", b.Name)
+	return err
 }
 
 // Create validates and creates a new local branch from req, then

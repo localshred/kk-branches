@@ -41,7 +41,7 @@ func TestDeleteCollectsErrors(t *testing.T) {
 	}
 	s := loaded(t, f)
 
-	s, cmd := press(t, s, "a", "d", "y")
+	s, cmd := press(t, s, "a", "b", "d", "y")
 	if cmd == nil {
 		t.Fatalf("accepting the dialog returned no delete command")
 	}
@@ -59,7 +59,7 @@ func TestDeleteHighlightedWhenNothingSelected(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/merged"), confirmBranch("alice/local"))}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "down", "d")
+	s, _ = press(t, s, "down", "b", "d")
 
 	if len(s.confirm) != 1 {
 		t.Fatalf("got %d dialogs, want only the safe one", len(s.confirm))
@@ -76,7 +76,7 @@ func TestDeleteMixedTiersTwoDialogs(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/merged"), confirmBranch("alice/local"))}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "down", "space", "down", "space", "d")
+	s, _ = press(t, s, "down", "space", "down", "space", "b", "d")
 	out := dialog(s)
 	if !strings.Contains(out, "Delete 1 merged branches?") || !strings.Contains(out, "alice/merged") {
 		t.Fatalf("first dialog does not list the safe branch:\n%s", out)
@@ -119,7 +119,7 @@ func TestDeleteDialogsListWorktreeRemoval(t *testing.T) {
 	f := &fakeActions{snap: snapshot(merged, local)}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "down", "space", "down", "space", "d")
+	s, _ = press(t, s, "down", "space", "down", "space", "b", "d")
 	if out := dialog(s); !strings.Contains(out, "alice/merged — removes worktree app-wt-alice-merged") {
 		t.Errorf("safe dialog missing worktree removal:\n%s", out)
 	}
@@ -135,7 +135,7 @@ func TestNewBranchCheckoutQuits(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x")), bases: []string{"origin/main", "origin/release-2"}}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "n", "f", "i", "x")
+	s, _ = press(t, s, "b", "n", "f", "i", "x")
 	s, cmd := submit(t, s)
 
 	want := app.CreateRequest{Name: "alice/fix", Base: "origin/main", Then: app.ThenCheckout}
@@ -157,7 +157,7 @@ func TestNewBranchCreateOnlyReloads(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x")), bases: []string{"origin/main"}}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "n", "y", "right", "right")
+	s, _ = press(t, s, "b", "n", "y", "right", "right")
 	s, cmd := submit(t, s)
 
 	if got := f.creates[0].Then; got != app.ThenCreate {
@@ -185,7 +185,7 @@ func TestNewBranchErrorStaysInDialog(t *testing.T) {
 	}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "n", "x")
+	s, _ = press(t, s, "b", "n", "x")
 	s, cmd := submit(t, s)
 
 	if s.newBranch == nil {
@@ -205,7 +205,7 @@ func TestNewBranchFromCyclesToCustomRef(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x")), bases: []string{"origin/main", "origin/release-2"}}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "down", "n", "z", "tab")
+	s, _ = press(t, s, "down", "b", "n", "z", "tab")
 	if !strings.Contains(view(s), "origin/release-2") {
 		t.Errorf("View() missing second base:\n%s", view(s))
 	}
@@ -222,7 +222,7 @@ func TestNewBranchFromIncludesHighlighted(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x")), bases: []string{"origin/main"}}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "down", "n", "z", "tab")
+	s, _ = press(t, s, "down", "b", "n", "z", "tab")
 	s, _ = submit(t, s)
 
 	if got := f.creates[0].Base; got != "alice/x" {
@@ -238,7 +238,7 @@ func TestNewBranchWorktreeSetsCdPath(t *testing.T) {
 	}
 	s := loaded(t, f)
 
-	s, _ = press(t, s, "n", "w", "t", "right")
+	s, _ = press(t, s, "b", "n", "w", "t", "right")
 	if !strings.Contains(view(s), "/r/app-wt-alice-wt") {
 		t.Errorf("View() missing computed worktree path:\n%s", view(s))
 	}

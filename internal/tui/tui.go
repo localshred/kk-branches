@@ -23,6 +23,7 @@ type Actions interface {
 	Load() (model.Snapshot, error)
 	LoadPRs(model.Snapshot) (model.Snapshot, error)
 	Bases(model.Snapshot) []string
+	Checkout(model.Snapshot, model.Branch) error
 	Create(model.Snapshot, app.CreateRequest) (string, error)
 	AddWorktree(model.Snapshot, string) (string, error)
 	RemoveWorktree(model.Branch) error
@@ -33,7 +34,7 @@ type Actions interface {
 
 // Exit describes what the caller should do once the TUI has closed.
 type Exit struct {
-	CdPath  string // set after creating a worktree
+	CdPath  string // set after creating a worktree, or by w g
 	Message string // printed after the TUI exits
 }
 

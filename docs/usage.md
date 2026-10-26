@@ -37,22 +37,35 @@ Keys:
 - `space` — select or unselect the highlighted row (safe and confirm rows
   only; blocked rows can't be selected)
 - `a` — select every safe row currently visible under the filter
+- `A` — clear the selection
 - `tab` / `shift+tab` — cycle the filter preset forward or back
 - `/` — focus the text filter (`enter` keeps it, `esc` clears it); it
   matches branch names case-insensitively
-- `d` / `c` — delete the selection, or the highlighted row if nothing is
-  selected
-- `w` — add a worktree for the highlighted row
-- `W` — remove the highlighted row's worktree
-- `n` — open the new-branch dialog
 - `s` — sync every branch with origin
 - `o` — open the highlighted row's PR in the browser
+- `y` — copy the highlighted branch name to the clipboard, through the
+  terminal (OSC 52; under tmux this needs `set -g set-clipboard on`)
 - `i` — open the info panel, which lists why the highlighted row is safe,
   confirm, or blocked, plus its last sync result; it follows the cursor as
   you move, and `i` or `esc` closes it
 - `r` — reload
 - `?` — toggle the help overlay
 - `q` / `ctrl+c` — quit
+
+Branch and worktree commands sit behind a prefix key. Pressing `b` or `w`
+shows that group's keys below the table; press one of them, or `esc` to
+cancel.
+
+- `b c` — check the highlighted branch out in the main checkout, so an
+  editor open on the repository sees it; refuses when the main checkout
+  has uncommitted changes (it never stashes) or the branch is already
+  checked out in a worktree
+- `b d` — delete the selection, or the highlighted row if nothing is
+  selected
+- `b n` — open the new-branch dialog
+- `w a` — add a worktree for the highlighted row
+- `w d` — remove the highlighted row's worktree
+- `w g` — quit and print `cd <path>` for the highlighted row's worktree
 
 Filter presets, in cycle order: `all`, `merged`, `gone`, `local-only`,
 `worktree`, `dirty`, `stale` (last commit older than 30 days).

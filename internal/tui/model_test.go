@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ type fakeActions struct {
 	prSnap     *model.Snapshot
 	prErr      error
 	bases      []string
+	checkouts  []string
 	createPath string
 	createErr  error
 	creates    []app.CreateRequest
@@ -40,6 +42,11 @@ func (f *fakeActions) AddWorktree(_ model.Snapshot, branch string) (string, erro
 }
 
 func (f *fakeActions) Bases(model.Snapshot) []string { return f.bases }
+
+func (f *fakeActions) Checkout(_ model.Snapshot, b model.Branch) error {
+	f.checkouts = append(f.checkouts, b.Name)
+	return nil
+}
 
 func (f *fakeActions) Create(_ model.Snapshot, req app.CreateRequest) (string, error) {
 	f.creates = append(f.creates, req)
@@ -198,6 +205,52 @@ func TestBlockedRowNotSelectable(t *testing.T) {
 	}
 }
 
+func TestBranchMenuChecksOutHighlighted(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+
+	s, cmd := press(t, s, "down", "b", "c")
+	if cmd == nil {
+		t.Fatalf("b c returned no command")
+	}
+	s = send(t, s, cmd())
+
+	if want := []string{"alice/x"}; !reflect.DeepEqual(f.checkouts, want) {
+		t.Errorf("Checkout calls = %v, want %v", f.checkouts, want)
+	}
+	if out := view(s); !strings.Contains(out, "checked out alice/x in /r/app") {
+		t.Errorf("View() missing checkout status:\n%s", out)
+	}
+}
+
+func TestClearSelection(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/a"), safeBranch("alice/b"))}
+	s := loaded(t, f)
+
+	s, _ = press(t, s, "a", "A")
+
+	if n := len(s.selected); n != 0 {
+		t.Errorf("selected = %v, want none", s.selected)
+	}
+}
+
+func TestCopyBranchName(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+
+	s, cmd := press(t, s, "down", "y")
+	if cmd == nil {
+		t.Fatalf("y returned no command")
+	}
+
+	if got, want := cmd(), tea.SetClipboard("alice/x")(); got != want {
+		t.Errorf("y message = %#v, want %#v", got, want)
+	}
+	if out := view(s); !strings.Contains(out, "copied alice/x") {
+		t.Errorf("View() missing copy status:\n%s", out)
+	}
+}
+
 func TestCursorRowHighlighted(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
 	s := loaded(t, f)
@@ -276,6 +329,27 @@ func TestInfoPanelShowsSafeAndTrunkReasons(t *testing.T) {
 	s, _ = press(t, s, "down")
 	if out := view(s); !strings.Contains(out, "PR #7 merged and contains the branch tip") {
 		t.Errorf("safe info missing reason:\n%s", out)
+	}
+}
+
+func TestMenuShowsKeysAndEscCancels(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+
+	s, _ = press(t, s, "down", "b")
+	out := view(s)
+	for _, text := range []string{"c  checkout in main repo", "d  delete", "n  new branch", "esc cancel"} {
+		if !strings.Contains(out, text) {
+			t.Errorf("branch menu missing %q:\n%s", text, out)
+		}
+	}
+
+	s, _ = press(t, s, "esc", "d")
+	if out := view(s); strings.Contains(out, "checkout in main repo") {
+		t.Errorf("esc left the menu open:\n%s", out)
+	}
+	if s.confirm != nil {
+		t.Errorf("d without the b prefix opened a delete dialog")
 	}
 }
 
@@ -384,7 +458,7 @@ func TestSyncDisablesMutatingKeys(t *testing.T) {
 	s := loaded(t, f)
 	s, _ = press(t, s, "s")
 
-	s, _ = press(t, s, "down", "d")
+	s, _ = press(t, s, "down", "b", "d")
 
 	if len(f.deleted) != 0 {
 		t.Errorf("Delete called with %v during sync, want no calls", f.deleted)
@@ -535,5 +609,52 @@ func TestWorktreeColumn(t *testing.T) {
 	}
 	if row := rowFor(t, out, "★"); !strings.Contains(row, "(main checkout)") {
 		t.Errorf("trunk row = %q, want (main checkout)", row)
+	}
+}
+
+func TestWorktreeGoQuitsWithCdPath(t *testing.T) {
+	b := safeBranch("alice/x")
+	b.Worktree = &model.Worktree{Path: "/r/app-wt-alice-x", Branch: "alice/x"}
+	f := &fakeActions{snap: snapshot(b, safeBranch("alice/y"))}
+	s := loaded(t, f)
+
+	s, cmd := press(t, s, "down", "w", "g")
+	if cmd == nil {
+		t.Fatalf("w g returned no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("w g did not quit")
+	}
+	if want := (Exit{CdPath: "/r/app-wt-alice-x"}); s.exit != want {
+		t.Errorf("Exit = %+v, want %+v", s.exit, want)
+	}
+}
+
+func TestWorktreeGoWithoutWorktree(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+
+	s, cmd := press(t, s, "down", "w", "g")
+
+	if cmd != nil {
+		t.Errorf("w g on a row without a worktree returned a command")
+	}
+	if out := view(s); !strings.Contains(out, "alice/x has no worktree") {
+		t.Errorf("View() missing no-worktree status:\n%s", out)
+	}
+}
+
+func TestWorktreeMenuAddsWorktree(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+
+	_, cmd := press(t, s, "down", "w", "a")
+	if cmd == nil {
+		t.Fatalf("w a returned no command")
+	}
+	cmd()
+
+	if want := []string{"alice/x"}; !reflect.DeepEqual(f.worktrees, want) {
+		t.Errorf("AddWorktree calls = %v, want %v", f.worktrees, want)
 	}
 }

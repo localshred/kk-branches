@@ -92,6 +92,65 @@ func mergedWithWorktree() model.Branch {
 	}
 }
 
+func TestCheckoutRefusesBranchInWorktree(t *testing.T) {
+	fake := &run.Fake{}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app"}}
+	s := model.Snapshot{MainPath: "/r/app"}
+
+	for _, tc := range []struct {
+		worktree model.Worktree
+		want     string
+	}{
+		{model.Worktree{Path: "/r/app", Main: true}, "branch alice/x is already checked out in the main checkout"},
+		{model.Worktree{Path: "/r/app-wt-alice-x"}, "branch alice/x is checked out at /r/app-wt-alice-x"},
+	} {
+		b := model.Branch{Name: "alice/x", Worktree: &tc.worktree}
+		if err := a.Checkout(s, b); err == nil || err.Error() != tc.want {
+			t.Errorf("Checkout() error = %v, want %q", err, tc.want)
+		}
+	}
+	if len(fake.Calls) != 0 {
+		t.Errorf("Calls = %v, want none", joinedCalls(fake.Calls))
+	}
+}
+
+func TestCheckoutRefusesDirtyMain(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app status --porcelain": {Stdout: " M app.go\n"},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app-wt-other"}}
+
+	err := a.Checkout(model.Snapshot{MainPath: "/r/app"}, model.Branch{Name: "alice/x"})
+	want := "main checkout has uncommitted changes: /r/app"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Checkout() error = %v, want %q", err, want)
+	}
+	for _, call := range joinedCalls(fake.Calls) {
+		if strings.Contains(call, " checkout ") {
+			t.Errorf("Calls contains %q, want no checkout", call)
+		}
+	}
+}
+
+func TestCheckoutSwitchesMainCheckout(t *testing.T) {
+	fake := &run.Fake{Results: map[string]run.Result{
+		"git -C /r/app status --porcelain": {},
+		"git -C /r/app checkout alice/x":   {},
+	}}
+	a := App{Repo: git.Repo{Run: fake, Dir: "/r/app-wt-other"}}
+
+	if err := a.Checkout(model.Snapshot{MainPath: "/r/app"}, model.Branch{Name: "alice/x"}); err != nil {
+		t.Fatalf("Checkout() error = %v", err)
+	}
+	want := []string{
+		"git -C /r/app status --porcelain",
+		"git -C /r/app checkout alice/x",
+	}
+	if got := joinedCalls(fake.Calls); !reflect.DeepEqual(got, want) {
+		t.Errorf("Calls = %v, want %v", got, want)
+	}
+}
+
 func TestCreateUsesNoTrack(t *testing.T) {
 	fake := &run.Fake{Results: map[string]run.Result{
 		"git -C /r/app check-ref-format --branch alice/x":     {},

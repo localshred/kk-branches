@@ -32,7 +32,7 @@ example-repo  trunk: main  ↻ fetched 3m ago
 ○ alice/fix       local only  — none      repo-wt-alice-fix   1d   confirm
 ○ feature/x       ↑2          #42 open    repo-wt-feature-x   3d   confirm
 
-0 selected · space select · a select safe · d delete · w +worktree
+0 selected · space select · a select safe · b branch… · w worktree…
 ```
 
 Pass `--print` to print the table once and exit, without the interactive

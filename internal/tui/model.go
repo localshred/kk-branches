@@ -43,16 +43,14 @@ const syncRunningText = "sync running"
 // actionKeys are the keys that change repository state or start work;
 // they are disabled while a sync is running.
 var actionKeys = map[string]func(screen) (screen, tea.Cmd){
-	"W":     screen.removeWorktree,
+	"A":     screen.clearSelection,
 	"a":     screen.selectSafe,
-	"c":     screen.deleteTargets,
-	"d":     screen.deleteTargets,
-	"n":     screen.openNewBranch,
+	"b":     openMenu("b"),
 	"o":     screen.openPR,
 	"r":     screen.refresh,
 	"s":     screen.startSync,
 	"space": screen.toggleSelect,
-	"w":     screen.addWorktree,
+	"w":     openMenu("w"),
 }
 
 // columnHeaders labels the table columns after the select glyph.
@@ -62,17 +60,20 @@ var columnHeaders = []string{"BRANCH", "ORIGIN", "PR", "WORKTREE", "AGE", "SAFE 
 var helpText = []string{
 	"↑/k ↓/j     move",
 	"space       select / unselect (safe and confirm rows)",
-	"a           select every safe row in view",
+	"a / A       select every safe row in view / clear the selection",
 	"tab         next filter preset (shift+tab: previous)",
 	"/           filter by name (enter keeps, esc clears)",
-	"d / c       delete selection, or the highlighted row",
-	"w           add a worktree for the highlighted row",
-	"W           remove the highlighted row's worktree",
-	"n           new branch",
-	"s           sync all branches with origin",
-	"o           open the highlighted row's PR",
 	"i           explain the highlighted row's deletion risk",
+	"o           open the highlighted row's PR",
+	"y           copy the highlighted branch name",
+	"s           sync all branches with origin",
 	"r           reload",
+	"b c         branch: check out in the main checkout",
+	"b d         branch: delete selection, or the highlighted row",
+	"b n         branch: new",
+	"w a         worktree: add one for the highlighted row",
+	"w d         worktree: remove the highlighted row's",
+	"w g         worktree: quit and print cd to the highlighted row's",
 	"?           toggle this help",
 	"q / ctrl+c  quit",
 }
@@ -98,6 +99,7 @@ var navKeys = map[string]func(screen) (screen, tea.Cmd){
 	"shift+tab": screen.prevPreset,
 	"tab":       screen.nextPreset,
 	"up":        screen.moveUp,
+	"y":         screen.copyName,
 }
 
 // riskWords renders each risk level for the table's last column.
@@ -178,6 +180,16 @@ func (s screen) addWorktree() (screen, tea.Cmd) {
 	}
 }
 
+// checkout checks the highlighted branch out in the main checkout.
+func (s screen) checkout() (screen, tea.Cmd) {
+	b, ok := s.highlighted()
+	if !ok {
+		return s, nil
+	}
+	a, snap := s.actions, s.snap
+	return s, actionCmd(func() error { return a.Checkout(snap, b) }, "checked out "+b.Name+" in "+snap.MainPath, true)
+}
+
 // alignColumns pads every cell but the last in each row to its
 // column's widest visible width, measured with ui.VisibleLen so
 // hyperlinks and colors don't count.
@@ -217,6 +229,23 @@ func (s screen) clampCursor() screen {
 	return s
 }
 
+// clearSelection unselects every row.
+func (s screen) clearSelection() (screen, tea.Cmd) {
+	s.selected = map[string]bool{}
+	return s, nil
+}
+
+// copyName copies the highlighted branch name to the system clipboard
+// through the terminal (OSC 52).
+func (s screen) copyName() (screen, tea.Cmd) {
+	b, ok := s.highlighted()
+	if !ok {
+		return s, nil
+	}
+	s.status = okStatus("copied " + b.Name)
+	return s, tea.SetClipboard(b.Name)
+}
+
 // copyResults returns a copy of results, so a screen value never
 // shares its sync results with an earlier one.
 func copyResults(results map[string]string) map[string]string {
@@ -243,6 +272,21 @@ func errStatus(text string) status { return status{err: true, text: text} }
 // focusFilter starts editing the text filter.
 func (s screen) focusFilter() (screen, tea.Cmd) {
 	return s, s.filter.Focus()
+}
+
+// goWorktree quits, leaving the caller to print a cd to the
+// highlighted row's worktree.
+func (s screen) goWorktree() (screen, tea.Cmd) {
+	b, ok := s.highlighted()
+	if !ok {
+		return s, nil
+	}
+	if b.Worktree == nil {
+		s.status = errStatus(b.Name + " has no worktree")
+		return s, nil
+	}
+	s.exit = Exit{CdPath: b.Worktree.Path}
+	return s, tea.Quit
 }
 
 // highlightRow paints cursorBackground behind line out to width
@@ -405,8 +449,8 @@ func (s screen) onInfoKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return s, nil
 }
 
-// onKey routes a keypress to the open dialog, the text filter, the
-// help overlay, the info panel, or the table.
+// onKey routes a keypress to the open dialog, the open menu, the text
+// filter, the help overlay, the info panel, or the table.
 func (s screen) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	switch {
@@ -416,6 +460,8 @@ func (s screen) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return s.onNewBranchKey(msg)
 	case s.confirm != nil:
 		return s.onConfirmKey(k)
+	case s.menu != "":
+		return s.onMenuKey(k)
 	case s.filter.Focused():
 		return s.onFilterKey(msg)
 	case s.help:
@@ -590,6 +636,8 @@ func (s screen) render() string {
 		bottom = append(bottom, "", s.newBranch.view())
 	case s.confirm != nil:
 		bottom = append(bottom, "", s.confirm[0].view())
+	case s.menu != "":
+		bottom = append(bottom, "", menus[s.menu].view())
 	case s.info:
 		bottom = append(bottom, "", s.renderInfo())
 	}
@@ -628,7 +676,7 @@ func (s screen) renderFilters() string {
 
 // renderFooter draws the selection count and key hints.
 func (s screen) renderFooter() string {
-	hints := "space select · a select safe · d delete · w +worktree · W -worktree · n new · s sync · o open PR · i info · r reload · ? help · q quit"
+	hints := "space select · a select safe · b branch… · w worktree… · s sync · y copy · i info · o open PR · r reload · ? help · q quit"
 	return strconv.Itoa(len(s.selected)) + " selected · " + ui.Dim(hints)
 }
 
@@ -759,6 +807,7 @@ type screen struct {
 	height        int
 	help          bool
 	info          bool
+	menu          string
 	newBranch     *newBranchDialog
 	now           func() time.Time
 	preset        int
