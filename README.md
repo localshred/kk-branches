@@ -28,7 +28,7 @@ kk branches
 example-repo  trunk: main  ↻ fetched 3m ago
 
   BRANCH          ORIGIN      PR          WORKTREE            AGE  SAFE DELETION?
-★ main            =           trunk       (main checkout)     2h
+* main            =           trunk       (main checkout)     2h
 ○ alice/fix       local only  — none      repo-wt-alice-fix   1d   confirm
 ○ feature/x       ↑2          #42 open    repo-wt-feature-x   3d   confirm
 

@@ -16,7 +16,8 @@ and a footer with the selection count and key hints.
 
 Columns, left to right:
 
-- select glyph — `★` trunk, `◉` selected, `○` neither
+- glyph — `*` checked out in the directory `kk-branches` runs from (as in
+  `git branch`), `◉` selected, `○` selectable, blank for a trunk
 - `BRANCH` — local name, truncated in the middle if long; if its upstream
   has a different name, a dimmed `→ upstream` follows it
 - `ORIGIN` — `=` in sync, `↑n`/`↓n` ahead/behind (both if diverged), `gone`

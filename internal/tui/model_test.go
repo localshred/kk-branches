@@ -223,6 +223,25 @@ func TestBranchMenuChecksOutHighlighted(t *testing.T) {
 	}
 }
 
+func TestCheckedOutMarker(t *testing.T) {
+	f := &fakeActions{snap: snapshot(safeBranch("alice/x"))}
+	s := loaded(t, f)
+	if row := rowFor(t, view(s), "local only"); strings.ContainsAny(row, "*★○") {
+		t.Errorf("trunk row not checked out here = %q, want a blank glyph", row)
+	}
+
+	f.snap.Branches[0].Worktree = &model.Worktree{Path: "/r/app", Branch: "main", Main: true, Current: true}
+	s = loaded(t, f)
+
+	out := view(s)
+	if row := rowFor(t, out, "local only"); !strings.Contains(row, "*  main") {
+		t.Errorf("checked-out row = %q, want the * marker before main", row)
+	}
+	if row := rowFor(t, out, "alice/x"); strings.Contains(row, "*") {
+		t.Errorf("row not checked out = %q, want no * marker", row)
+	}
+}
+
 func TestClearSelection(t *testing.T) {
 	f := &fakeActions{snap: snapshot(safeBranch("alice/a"), safeBranch("alice/b"))}
 	s := loaded(t, f)
@@ -273,7 +292,7 @@ func TestCursorRowHighlighted(t *testing.T) {
 	if n := ui.VisibleLen(row); n != 120 {
 		t.Errorf("cursor row visible width = %d, want 120", n)
 	}
-	if trunk := rowFor(t, out, "★"); strings.Contains(trunk, cursorBackground) {
+	if trunk := rowFor(t, out, "local only"); strings.Contains(trunk, cursorBackground) {
 		t.Errorf("non-cursor row is highlighted: %q", trunk)
 	}
 }
@@ -607,7 +626,7 @@ func TestWorktreeColumn(t *testing.T) {
 	if row := rowFor(t, out, "alice/wt"); !strings.Contains(row, "app-wt-alice-wt ✎ dirty") {
 		t.Errorf("row = %q, want relative worktree path and dirty marker", row)
 	}
-	if row := rowFor(t, out, "★"); !strings.Contains(row, "(main checkout)") {
+	if row := rowFor(t, out, "local only"); !strings.Contains(row, "(main checkout)") {
 		t.Errorf("trunk row = %q, want (main checkout)", row)
 	}
 }

@@ -714,12 +714,16 @@ func (s screen) renderInfo() string {
 	return strings.Join(append(lines, ui.Dim("i/esc close")), "\n")
 }
 
-// renderRow builds the cells for one branch.
+// renderRow builds the cells for one branch. The glyph marks the
+// branch checked out where kk runs with git's own `*`, leaves trunks
+// blank since they can't be selected, and otherwise shows selection.
 func (s screen) renderRow(b model.Branch) []string {
 	glyph := "○"
 	switch {
+	case b.Worktree != nil && b.Worktree.Current:
+		glyph = ui.Green("*")
 	case b.Trunk:
-		glyph = ui.Yellow("★")
+		glyph = ""
 	case s.selected[b.Name]:
 		glyph = ui.Cyan("◉")
 	}
